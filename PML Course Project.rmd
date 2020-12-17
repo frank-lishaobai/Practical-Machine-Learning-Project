@@ -1,0 +1,139 @@
+---
+title: 'PML Course Project: Exercise Manner Prediction'
+author: "LI SHAOBAI"
+date: "2020/12/17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Getting and Cleaning Data
+=========================
+
+First thing first, get the data needed for prediction.
+
+```{r getting data}
+set.seed(1234)  #set seed for the purpose of reproducibility
+trainurl='https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+validurl='https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+download.file(trainurl,destfile = 'train.csv')  #download the data to default working directory
+download.file(validurl,destfile = 'valid.csv')
+train0=read.csv('train.csv')  #read in the training data set
+valid=read.csv('valid.csv')  #read in the validation data set
+str(train0,list.len=ncol(train0))  #take a look at the training set
+```
+
+At first, according to [this paper](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf), the data used for prediction are collected from the sensors mounted on the users' belts, arms, dumbbells and forearms, and column 1 to 7 ('x', 'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2', 'cvtd_timestamp', 'new_window' and 'num_window') are presumably not useful parameters for prediction, so they will be deleted.
+
+Secondly, there are apparently a lot of NAs and blank characters ('') in the training set. According to the '80% rule' raised by Smilde et al., [2005](https://scholar.google.com/scholar_lookup?journal=Anal.+Chem&title=Fusion+of+mass+spectrometry-based+metabolomics+data&author=A.+K.+Smilde&author=M.+J.+van+der+Werf&author=S.+Bijlsma&author=B.+J.+van+der+Werff-van+der+Vat&author=R.+H.+Jellema&volume=77&publication_year=2005&pages=6729-6736&pmid=16223263&doi=10.1021/ac051080y&), a variable will be kept only if it has a non-zero value for at least 80% of all samples, so the percentage of blank characters and NAs of all the variables will be checked to see if they are valuable predictors for prediction.
+
+```{r cleaning data 1}
+train0$classe=as.factor(train0$classe)  #turn classe from characters into factors since it's a classification job
+train1=train0[,-(1:7)]  #delete prediction-irrelevant variables
+sapply(train1,function(x) mean(is.na(x)|x==''))  #check blank characters and NAs
+```
+
+It seems some predictors almost have no valuable data, so they will be deleted according to the '80% rule' mentioned above.
+
+```{r cleaning data 2}
+nacol=sapply(train1,function(x) mean(is.na(x)|x==''))>.2  #check according to the '80% rule'
+train2=train1[,nacol==FALSE]  #delete predictors of no valuable information
+library(caret)
+nearZeroVar(train2)  #check predictors with few unique values
+```
+
+It seems that there isn't any near-zero-variance predictors left, which is good. Now I want to check if some of the predictors left are highly correlated.
+
+```{r correlation check}
+library(corrplot)
+cormatrix=cor(train2[,-ncol(train2)])
+corrplot(cormatrix,method='color',type='lower')  #corrplot
+findCorrelation(cormatrix,cutoff = .8)  #find highly correlated predictors with a cutoff of .8
+```
+
+It seems that there are some highly correlated predictors left, so principle component analysis is needed in the preprocess when building models later to reduce noise and the number of predictors.
+
+Slicing Data
+============
+```{r slicing data}
+intrain=createDataPartition(train2$classe,p=.7,list = F)  #the original training set is sliced into a sub-testing set and a sub-training set
+training=train2[intrain,]
+testing=train2[-intrain,]
+```
+
+Configuring Parallel Computing
+==========================
+
+Parallel Computing is needed to render the running time of the models (especially the random forest) tolerable.
+
+```{r configuring parallel computing}
+library(parallel)
+library(doParallel)
+cluster=makeCluster(detectCores()-1) #convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+
+Cross Validation
+================
+
+5-fold cross validation is used by setting trainControl.
+
+```{r cross validation}
+fitctrl=trainControl(method = 'cv',number = 5, allowParallel=T,savePredictions=T,classProbs=T)
+```
+
+Modeling
+========
+
+A random forest, a gradient boosting machine and a decision tree is built for prediction.
+
+```{r modeling}
+rffit=train(classe~.,method='rf',data=training,trControl=fitctrl,preProc=c('center','scale','pca'))  #random forest
+gbmfit=train(classe~.,method='gbm',data=training,trControl=fitctrl,preProc=c('center','scale','pca'),verbose=F)  #gradient boosting machine
+rpartfit=train(classe~.,method='rpart',data=training,trControl=fitctrl,preProc=c('center','scale','pca'))  #decision tree
+stopCluster(cluster)  #shut down the cluster
+registerDoSEQ()
+```
+
+Out-Of-Sample Error
+===================
+
+The sub-testing set is used for calculating out-of-sample error and comparing the 3 different models.
+
+```{r OOS error}
+confusionMatrix(predict(rffit,newdata = testing),testing$classe)  #random forest
+confusionMatrix(predict(gbmfit,newdata = testing),testing$classe)  #gradient boosting machine
+confusionMatrix(predict(rpartfit,newdata = testing),testing$classe)  #decision tree
+```
+It seems that the random forest model is the best while the decision tree model is the worst.
+
+ROC Curve
+=========
+
+Choose the best model by comparing the area under their ROC curves.
+
+```{r evaluation, include=FALSE}
+library(MLeval)
+res <- evalm(list(rpartfit,rffit,gbmfit),gnames=c('rpart','rf','gbm'))
+```
+```{r ROC curve}
+res$roc
+```
+
+Still, the random forest model is the best, so it will be used for prediction.
+
+Conclusion
+==========
+
+The random forest model is the best for this prediction job.
+
+Contact
+=======
+
+I'm on my way of accomplishing Johns Hopkins' data science specialization and becoming a professional in data science. I'm now available to any opportunity. Please feel free to contact me for any further discussion.
+
+Email: frankbluemoon29@icloud.com
+
+GitHub: [LI Shaobai's GitHub](https://github.com/frank-lishaobai)

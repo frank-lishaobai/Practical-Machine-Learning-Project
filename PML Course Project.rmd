@@ -129,6 +129,13 @@ Conclusion
 
 The random forest model is the best for this prediction job.
 
+Prediction
+==========
+```{r prediction, results='hide'}
+predict(rffit, newdata=valid)
+```
+The output is hided to prevent plagiarism.
+
 Contact
 =======
 
